@@ -17,23 +17,16 @@ var (
 	addr     = flag.String("addr", ":8080", "TCP address to listen to")
 	compress = flag.Bool("compress", false, "Whether to enable transparent response compression")
 	url_map  = make(map[string]map[string]string)
+	skip_headers = []string("server")
 )
 
 func requestHandler(ctx *fasthttp.RequestCtx) {
-	fmt.Println("RequestURI:", string(ctx.RequestURI()))
-	fmt.Println("URI:", ctx.URI())
-	fmt.Println("Path:", string(ctx.Path()))
-	fmt.Println("Host:", string(ctx.Host()))
-	fmt.Println("Method:", string(ctx.Method()))
 
 	// remove any port info
 	host := string(ctx.Host())
 	if i := strings.Index(host, ":"); i != -1 {
 		host = host[:i]
 	}
-
-	fmt.Println("Canonical host is", host)
-	fmt.Println("\n----\n\n")
 
 	path := fmt.Sprintf("%s", ctx.Path())
 	_, in_map := url_map[host][path]
@@ -49,7 +42,6 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	if in_map {
 		// we only ever redirect GETs
 		// TODO: we should really think hard about the above assumption
-		fmt.Println("Mode: Redirect")
 
 		redirect_location := fmt.Sprintf("%s://%s%s", ingress_protocol, host, path)
 
@@ -57,9 +49,9 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		ctx.Response.Header.Set("Location", redirect_location)
 		ctx.Response.Header.Set("X-Redirector", "redirect")
 
-	} else {
+		fmt.Println("[redirect] 301", host, path, "->", redirect_location)
 
-		fmt.Println("Mode: Proxy")
+	} else {
 
 		// response should indicate we proxied it
 		ctx.Response.Header.Set("X-Redirector", "proxy")
@@ -75,17 +67,10 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 
 		proxy_request.SetRequestURI(proxy_url)
 
-		fmt.Println("Protocol:", string(ingress_protocol))
-		fmt.Println("URL:", proxy_url)
-		fmt.Println("Method:", string(ctx.Method()))
-
 		// copy any body data
 		ingress_body := ctx.PostBody()
 		if len(ingress_body) == 0 {
 			ingress_body = nil
-			fmt.Println("Body: nil")
-		} else {
-			fmt.Println("Body:", string(ingress_body))
 		}
 
 		// set body
@@ -97,7 +82,6 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		// copy headers from ingress request into proxy request
 		ctx.Request.Header.VisitAll(func(key, value []byte) {
 			proxy_request.Header.Add(string(key), string(value))
-			fmt.Println("Header:", string(key), ":", string(value))
 		})
 
 		client.Do(proxy_request, proxy_response)
@@ -107,9 +91,15 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		body := string(b)
 
 		// copy response headers back to egress response
+		h_count := 0
 		proxy_response.Header.VisitAll(func(key, value []byte) {
 			//fmt.Println(string(key), string(value))
-			ctx.Response.Header.Add(string(key), string(value))
+			_, skip := skip_headers[key]
+			if !skip {
+				ctx.Response.Header.Add(string(key), string(value))
+				h_count++
+				fmt.Println(string(key))
+			}
 		})
 
 		// copy status code back to egress response
@@ -119,6 +109,8 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		fmt.Fprintf(ctx, body)
 
 		// we're done, i think?
+
+		fmt.Println(fmt.Sprintf("[proxy] %s, status=%d, %d bytes, %d headers", proxy_url, proxy_response.StatusCode(), len(body), h_count))
 	}
 }
 
