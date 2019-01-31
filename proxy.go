@@ -1,16 +1,17 @@
 package main
 
+// TODO: Http2
+// TODO: Switch out net/http for
+// TODO: reduce conversions of []byte to string, as that has a non-zero cost.
+
 import (
-	"bytes"
+//	"bytes"
 	"flag"
 	"fmt"
-	//"math/rand"
-	"io/ioutil"
-	//	"io"
+//	"io/ioutil"
 	"log"
-	"net/http"
+//	"net/http"
 	"strings"
-
 	"github.com/valyala/fasthttp"
 )
 
@@ -64,17 +65,16 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		// response should indicate we proxied it
 		ctx.Response.Header.Set("X-Redirector", "proxy")
 
-		// start building a request
-		client := &http.Client{
-			// do not follow redirects; if there's a redirect issued upstream
-			// then we should spit that request out as-is. i think.
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-
 		// rebuild URL to request
 		proxy_url := fmt.Sprintf("%s://%s%s", ingress_protocol, host, ctx.Path())
+
+		// start building a request
+		client := &fasthttp.Client{}
+
+		proxy_request := fasthttp.AcquireRequest()
+		proxy_response := fasthttp.AcquireResponse()
+
+		proxy_request.SetRequestURI(proxy_url)
 
 		fmt.Println("Protocol:", string(ingress_protocol))
 		fmt.Println("URL:", proxy_url)
@@ -89,42 +89,37 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 			fmt.Println("Body:", string(ingress_body))
 		}
 
-		// TODO: how do we handle chunked responses
-		proxy_req, _ := http.NewRequest(string(ctx.Method()), proxy_url, bytes.NewBuffer(ingress_body))
+		// set body
+		proxy_request.SetBodyString(string(ingress_body))
+
+		// set request method
+		proxy_request.Header.SetMethod(string(ctx.Method()))
 
 		// copy headers from ingress request into proxy request
 		ctx.Request.Header.VisitAll(func(key, value []byte) {
-			proxy_req.Header.Set(string(key), string(value))
+			proxy_request.Header.Add(string(key), string(value))
 			fmt.Println("Header:", string(key), ":", string(value))
 		})
 
-		proxy_resp, err := client.Do(proxy_req)
-		if err != nil {
-			// todo?
-			panic(err)
-		}
-		defer proxy_resp.Body.Close()
+		client.Do(proxy_request, proxy_response)
 
-		b, err := ioutil.ReadAll(proxy_resp.Body)
-
-		if err != nil {
-			log.Fatal(err)
-			// todo?
-			panic(err)
-		}
+		b := proxy_response.Body()
 
 		body := string(b)
 
 		// copy response headers back to egress response
-		for k, v := range proxy_resp.Header {
-			ctx.Response.Header.Set(string(k), string(v[0]))
-		}
+		proxy_response.Header.VisitAll(func(key, value []byte) {
+			//fmt.Println(string(key), string(value))
+			ctx.Response.Header.Add(string(key), string(value))
+		})
 
 		// copy status code back to egress response
-		ctx.SetStatusCode(proxy_resp.StatusCode)
+		ctx.SetStatusCode(proxy_response.StatusCode())
 
 		// copy proxy response back to egress response
 		fmt.Fprintf(ctx, body)
+
+		// we're done, i think?
 	}
 }
 
