@@ -5,14 +5,11 @@ package main
 // TODO: reduce conversions of []byte to string, as that has a non-zero cost.
 
 import (
-//	"bytes"
 	"flag"
 	"fmt"
-//	"io/ioutil"
-	"log"
-//	"net/http"
-	"strings"
 	"github.com/valyala/fasthttp"
+	"log"
+	"strings"
 )
 
 var (
