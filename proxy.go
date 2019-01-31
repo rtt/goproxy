@@ -1,8 +1,9 @@
 package main
 
-// TODO: Http2
-// TODO: Switch out net/http for
+// TODO: Http2?
 // TODO: reduce conversions of []byte to string, as that has a non-zero cost.
+// TODO: gzip during proxy phase
+// TODO: what about CONNECT requests?
 
 import (
 	"flag"
@@ -44,7 +45,8 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		ingress_protocol = []byte("http")
 	}
 
-	if string(ctx.Method()) == "GET" && in_map {
+	// todo: do we want to check the method here?
+	if in_map {
 		// we only ever redirect GETs
 		// TODO: we should really think hard about the above assumption
 		fmt.Println("Mode: Redirect")
