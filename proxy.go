@@ -154,13 +154,19 @@ func handle_conn(client net.Conn) {
     }
 }
 
+func populate_url_map(url_map *map[string]map[string]string) {
+	*url_map["vogue.co.uk"] = make(map[string]string)
+	*url_map["localhost"] = make(map[string]string)
+	*url_map["vogue.co.uk"]["/foo"] = "/bar"
+	*url_map["localhost"]["/foo"] = "/bar"
+}
+
 func main() {
 
 	// load some stuff into url_map
-	url_map["vogue.co.uk"] = make(map[string]string)
-	url_map["localhost"] = make(map[string]string)
-	url_map["vogue.co.uk"]["/foo"] = "/bar"
-	url_map["localhost"]["/foo"] = "/bar"
+	populate_url_map(&url_map)
+
+	fmt.Println(len(url_map), "urls in map")
 
 	h := requestHandler
 	if *compress {
@@ -169,6 +175,7 @@ func main() {
 
 	// spin the server up in a routine
 	go func () {
+		fmt.Println("Listening on", *addr)
 		if err := fasthttp.ListenAndServe(*addr, h); err != nil {
 			log.Fatalf("Error in ListenAndServe: %s", err)
 		}
@@ -181,7 +188,8 @@ func main() {
         panic("couldn't start listening")
     }
 	conns := client_conns(server)
-    for {
-        go handle_conn(<-conns)
-    }
+	for {
+		go handle_conn(<-conns)
+	}
+
 }
