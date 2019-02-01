@@ -6,10 +6,12 @@ package main
 // TODO: what about CONNECT requests?
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"github.com/valyala/fasthttp"
 	"log"
+	"net"
 	"strings"
 )
 
@@ -123,6 +125,35 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	}
 }
 
+func client_conns(listener net.Listener) chan net.Conn {
+    ch := make(chan net.Conn)
+    i := 0
+    go func() {
+        for {
+            client, _ := listener.Accept()
+            if client == nil {
+                fmt.Printf("Couldn't accept connection")
+                continue
+            }
+            i++
+            fmt.Printf("%d: %v <-> %v\n", i, client.LocalAddr(), client.RemoteAddr())
+            ch <- client
+        }
+    }()
+    return ch
+}
+
+func handle_conn(client net.Conn) {
+    b := bufio.NewReader(client)
+    for {
+        line, err := b.ReadBytes('\n')
+        if err != nil {
+            break
+        }
+        client.Write(line)
+    }
+}
+
 func main() {
 
 	// load some stuff into url_map
@@ -136,9 +167,21 @@ func main() {
 		h = fasthttp.CompressHandler(h)
 	}
 
-	fmt.Println("Starting...")
-	if err := fasthttp.ListenAndServe(*addr, h); err != nil {
-		log.Fatalf("Error in ListenAndServe: %s", err)
-	}
+	// spin the server up in a routine
+	go func () {
+		if err := fasthttp.ListenAndServe(*addr, h); err != nil {
+			log.Fatalf("Error in ListenAndServe: %s", err)
+		}
+	}()
 
+	// make a socket server to listen for commands
+	// this may well be redis-esque in the end?
+	server, _ := net.Listen("tcp", ":3107")
+	if server == nil {
+        panic("couldn't start listening")
+    }
+	conns := client_conns(server)
+    for {
+        go handle_conn(<-conns)
+    }
 }
