@@ -17,8 +17,17 @@ var (
 	addr     = flag.String("addr", ":8080", "TCP address to listen to")
 	compress = flag.Bool("compress", false, "Whether to enable transparent response compression")
 	url_map  = make(map[string]map[string]string)
-	skip_headers = []string("server")
+	skip_headers = []string{"Server",}
 )
+
+func in_array(needle string, haystack []string) bool {
+	for _, v := range haystack {
+		if needle == v {
+			return true
+		}
+	}
+	return false
+}
 
 func requestHandler(ctx *fasthttp.RequestCtx) {
 
@@ -94,11 +103,11 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 		h_count := 0
 		proxy_response.Header.VisitAll(func(key, value []byte) {
 			//fmt.Println(string(key), string(value))
-			_, skip := skip_headers[key]
-			if !skip {
-				ctx.Response.Header.Add(string(key), string(value))
+			k := string(key)
+			if in_array(k, skip_headers) {
+				ctx.Response.Header.Add(k, string(value))
 				h_count++
-				fmt.Println(string(key))
+				fmt.Println(k)
 			}
 		})
 
