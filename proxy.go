@@ -5,8 +5,29 @@ package main
 // TODO: gzip during proxy phase
 // TODO: what about CONNECT requests?
 
+// what does 301 do?
+// it does some reverse proxying
+// it does some 301-ing
+// it does some 404ing
+
+// [default]
+// 	hsts_redirect = true
+// 	[paths]
+// 		url = "/*"
+// 		response = 404
+
+
+
+
+
+
+[vogue.co.uk]
+* https://vogue.co.uk
+
+
+
 import (
-	"bufio"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"github.com/valyala/fasthttp"
@@ -15,11 +36,18 @@ import (
 	"strings"
 )
 
+const (
+	server_addr         = "224.0.0.1:9999"
+	max_datagram_size = 8192
+)
+
 var (
-	addr     = flag.String("addr", ":8080", "TCP address to listen to")
-	compress = flag.Bool("compress", false, "Whether to enable transparent response compression")
-	url_map  = make(map[string]map[string]string)
-	skip_headers = []string{"Server",}
+	addr         = flag.String("addr", "0.0.0.0", "TCP address to listen to")
+	port         = flag.String("port", "8192", "TCP port to listen on")
+	compress     = flag.Bool("compress", false, "Whether to enable transparent response compression")
+	url_map      = make(map[string]map[string]string)
+	current_map  = make(map[string]map[string]string)
+	skip_headers = []string{"Server"}
 )
 
 func in_array(needle string, haystack []string) bool {
@@ -125,71 +153,73 @@ func requestHandler(ctx *fasthttp.RequestCtx) {
 	}
 }
 
-func client_conns(listener net.Listener) chan net.Conn {
-    ch := make(chan net.Conn)
-    i := 0
-    go func() {
-        for {
-            client, _ := listener.Accept()
-            if client == nil {
-                fmt.Printf("Couldn't accept connection")
-                continue
-            }
-            i++
-            fmt.Printf("%d: %v <-> %v\n", i, client.LocalAddr(), client.RemoteAddr())
-            ch <- client
-        }
-    }()
-    return ch
+func reset_map(umap map[string]map[string]string) {
+	log.Print("Resetting map. Current length ", len(umap))
+	umap = make(map[string]map[string]string)
+	log.Print("Map length now ", len(umap))
 }
 
-func handle_conn(client net.Conn) {
-    b := bufio.NewReader(client)
-    for {
-        line, err := b.ReadBytes('\n')
-        if err != nil {
-            break
-        }
-        client.Write(line)
-    }
+func populate_url_map() {
+	new_url_map := make(map[string]map[string]string)
+
+	log.Print("Populating map...")
+	new_url_map["vogue.co.uk"] = make(map[string]string)
+	new_url_map["localhost"] = make(map[string]string)
+	new_url_map["vogue.co.uk"]["/foo"] = "/bar"
+	new_url_map["localhost"]["/foo"] = "/bar"
+	log.Print(len(new_url_map), " items in map")
+
+	log.Print("Switching in new map...")
+	url_map = new_url_map
 }
 
-func populate_url_map(url_map *map[string]map[string]string) {
-	*url_map["vogue.co.uk"] = make(map[string]string)
-	*url_map["localhost"] = make(map[string]string)
-	*url_map["vogue.co.uk"]["/foo"] = "/bar"
-	*url_map["localhost"]["/foo"] = "/bar"
+func multi_handler(src *net.UDPAddr, num_bytes int, bytes []byte) {
+	//log.Println(num_bytes, "bytes read from", src)
+	log.Println(hex.Dump(bytes[:num_bytes]))
+}
+
+func serve_multicast_udp(listen_addr string, handler func(*net.UDPAddr, int, []byte)) {
+	addr, err := net.ResolveUDPAddr("udp", listen_addr)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	listener, err := net.ListenMulticastUDP("udp", nil, addr)
+	listener.SetReadBuffer(max_datagram_size)
+
+	for {
+		b := make([]byte, max_datagram_size)
+		n, src, err := listener.ReadFromUDP(b)
+		if err != nil {
+			log.Fatal("ReadFromUDP failed:", err)
+		}
+		handler(src, n, b)
+	}
 }
 
 func main() {
 
 	// load some stuff into url_map
-	populate_url_map(&url_map)
+	populate_url_map()
 
-	fmt.Println(len(url_map), "urls in map")
+	log.Print(len(url_map), " urls in map")
 
-	h := requestHandler
+	handler := requestHandler
 	if *compress {
-		h = fasthttp.CompressHandler(h)
+		handler = fasthttp.CompressHandler(handler)
 	}
 
+	*addr = fmt.Sprintf("%s:%s", *addr, *port)
+
 	// spin the server up in a routine
-	go func () {
-		fmt.Println("Listening on", *addr)
-		if err := fasthttp.ListenAndServe(*addr, h); err != nil {
+	go func() {
+		log.Print("HTTP listening on ", *addr)
+		if err := fasthttp.ListenAndServe(*addr, handler); err != nil {
 			log.Fatalf("Error in ListenAndServe: %s", err)
 		}
 	}()
 
-	// make a socket server to listen for commands
-	// this may well be redis-esque in the end?
-	server, _ := net.Listen("tcp", ":3107")
-	if server == nil {
-        panic("couldn't start listening")
-    }
-	conns := client_conns(server)
-	for {
-		go handle_conn(<-conns)
-	}
-
+	log.Print("Multicast listening on ", server_addr)
+	serve_multicast_udp(server_addr, multi_handler)
 }
